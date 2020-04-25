@@ -39,7 +39,7 @@ object Main {
           typeRegistry.foreach {
             case (tpe, tree) =>
               println(tpe)
-              println(tree.syntax)
+              println(q"{..${tree.toList}}".syntax)
           }
       }
     }

@@ -1,6 +1,6 @@
 package apigen.core
 
-import cats.data.State
+import cats.data.{ NonEmptyList, State }
 import cats.syntax.all._
 import cats.instances.list._
 import higherkindness.droste.Algebra
@@ -22,24 +22,29 @@ object SchemaBuilder {
   case class IsNestedTypeOfAlias(closestAliasName: String) extends TypeContext
   case class IsNestedTypeOfField(closestFieldName: String) extends TypeContext
 
-  type TypeDefRegistry = Map[Type, Tree]
+  type TypeDefRegistry = Map[Type, NonEmptyList[Defn]]
   type TreeBuilder     = TypeContext => State[TypeDefRegistry, Type]
 
   def primitiveTreeBuilder(primTpe: Type): TreeBuilder = {
-    case TypeAlias(aliasName)   => addTypeAlias(t"$aliasName", primTpe).map(_ => primTpe)
+    case TypeAlias(aliasName) =>
+      val tpeName = Type.Name(aliasName)
+      addTypeDef(tpeName, q"type $tpeName = $primTpe").map(_ => primTpe)
     case _: RecordField         => State.pure(primTpe)
     case _: IsNestedTypeOfAlias => State.pure(primTpe)
     case _: IsNestedTypeOfField => State.pure(primTpe)
   }
 
-  def addTypeAlias(tpeAlias: Type, definition: Tree): State[TypeDefRegistry, Unit] =
+  def addTypeDef(tpeAlias: Type, definition: Defn): State[TypeDefRegistry, Unit] =
+    addTypeDefs(tpeAlias, NonEmptyList.one(definition))
+
+  def addTypeDefs(tpeAlias: Type, definitions: NonEmptyList[Defn]): State[TypeDefRegistry, Unit] =
     State.modify[TypeDefRegistry] { registry =>
       registry.get(tpeAlias) match {
         case Some(value) =>
           throw new Exception(
             s"Unexpected state, $tpeAlias type alias has already been defined as $value"
           )
-        case None => registry.updated(tpeAlias, definition)
+        case None => registry.updated(tpeAlias, definitions)
       }
     }
 
@@ -109,7 +114,7 @@ object SchemaBuilder {
           for {
             fieldsString <- fieldStringWithState
             classDef     = q"""case class $className(..$fieldsString)"""
-            _            <- addTypeAlias(className, classDef)
+            _            <- addTypeDef(className, classDef)
           } yield {
             className
           }
@@ -122,10 +127,9 @@ object SchemaBuilder {
       case JsonSchemaF.ArrayF(tpeBuilder) => {
         case TypeAlias(aliasName) =>
           for {
-            tpeStr    <- tpeBuilder(IsNestedTypeOfAlias(aliasName))
-            arrayType = q"List[$tpeStr]"
-            aliasTpe  = Type.Name(aliasName)
-            _         <- addTypeAlias(aliasTpe, arrayType)
+            tpeStr   <- tpeBuilder(IsNestedTypeOfAlias(aliasName))
+            aliasTpe = Type.Name(aliasName)
+            _        <- addTypeDef(aliasTpe, q"type $aliasTpe = List[$tpeStr]")
           } yield {
             aliasTpe
           }
@@ -213,10 +217,9 @@ object SchemaBuilder {
     val caseObjectsStr = cases
       .map(s => Term.Name(s))
       .map(cs => q"case object $cs extends ${baseTrait.templ}")
-    val allStats = baseTrait :: caseObjectsStr
-    val enumDef  = q"""{..$allStats }"""
+    val allStats = NonEmptyList.of[Defn](baseTrait, caseObjectsStr: _*)
 
-    addTypeAlias(baseName, enumDef).map(_ => baseName)
+    addTypeDefs(baseName, allStats).map(_ => baseName)
 
   }
 }
