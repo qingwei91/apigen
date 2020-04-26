@@ -1,11 +1,10 @@
-import higherkindness.mu.rpc.srcgen.Model._
-
 lazy val apigen = (project in file("."))
-//  .dependsOn(
-//    RootProject(uri("git://github.com/spartanz/schemaz#prototyping"))
-//  )
+  .aggregate(core, sbtApiGen)
+  .dependsOn(core, sbtApiGen)
+
+lazy val core = (project in file("core"))
   .settings(
-    name := "apigen",
+    name := "apigen-core",
     version := "0.1",
     scalaVersion := "2.12.10",
     libraryDependencies ++= Seq(
@@ -20,11 +19,16 @@ lazy val apigen = (project in file("."))
       "org.http4s"        %% "http4s-circe"        % "0.20.16",
       "org.scalameta"     %% "scalameta"           % "4.3.8"
     ),
-// Look for OpenAPI YAML files
-    muSrcGenIdlType := IdlType.OpenAPI,
-// Generate code that is compatible with http4s v0.20.x
-    muSrcGenOpenApiHttpImpl := higherkindness.mu.rpc.srcgen.openapi.OpenApiSrcGenerator.HttpImpl.Http4sV20,
     addCompilerPlugin(
       ("org.typelevel" %% "kind-projector" % "0.11.0").cross(CrossVersion.full)
     )
+  )
+
+lazy val sbtApiGen = (project in file("sbt-apigen"))
+  .dependsOn(core)
+  .enablePlugins(SbtPlugin)
+  .settings(name := "sbt-apigen")
+  .settings(
+    scalaVersion := "2.12.10",
+    sbtPlugin := true
   )

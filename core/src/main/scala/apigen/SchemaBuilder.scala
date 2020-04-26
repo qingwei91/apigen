@@ -1,14 +1,17 @@
-package apigen.core
+package apigen
 
 import cats.data.{ NonEmptyList, State }
-import cats.syntax.all._
 import cats.instances.list._
-import higherkindness.droste.Algebra
+import cats.syntax.all._
+import higherkindness.droste.{ Algebra, scheme }
 import higherkindness.skeuomorph.openapi.JsonSchemaF
 
 import scala.meta._
 
 object SchemaBuilder {
+
+  type TypeDefRegistry = Map[Type, NonEmptyList[Defn]]
+  type TreeBuilder     = TypeContext => State[TypeDefRegistry, Type]
 
   /**
    * ADT to model the context used by type, this is needed for
@@ -21,9 +24,6 @@ object SchemaBuilder {
   case class TypeAlias(aliasName: String)                  extends TypeContext
   case class IsNestedTypeOfAlias(closestAliasName: String) extends TypeContext
   case class IsNestedTypeOfField(closestFieldName: String) extends TypeContext
-
-  type TypeDefRegistry = Map[Type, NonEmptyList[Defn]]
-  type TreeBuilder     = TypeContext => State[TypeDefRegistry, Type]
 
   def primitiveTreeBuilder(primTpe: Type): TreeBuilder = {
     case TypeAlias(aliasName) =>
@@ -77,7 +77,7 @@ object SchemaBuilder {
    * I decided not to, we can consider it if we move to Scala 3
    *
    */
-  val printCode: Algebra[JsonSchemaF, TreeBuilder] =
+  val schemaToTreeBuiler: Algebra[JsonSchemaF, TreeBuilder] =
     Algebra[JsonSchemaF, TreeBuilder] {
       case JsonSchemaF.IntegerF()  => primitiveTreeBuilder(t"Int")
       case JsonSchemaF.LongF()     => primitiveTreeBuilder(t"Long")
@@ -194,6 +194,10 @@ object SchemaBuilder {
         }
       case JsonSchemaF.ReferenceF(ref) =>
         _ =>
+          /**
+           * Todo: should we consider validation?
+           * Todo: Make this support inter-file references
+           */
           State.pure {
             val tpeNameStr = ref.split("/").last
             Type.Name(tpeNameStr)
@@ -222,4 +226,21 @@ object SchemaBuilder {
     addTypeDefs(baseName, allStats).map(_ => baseName)
 
   }
+
+  def produceModelCode(openApiSchemas: Map[String, JsonSchemaF.Fixed]): Map[String, Defn.Object] =
+    openApiSchemas
+      .map {
+        case (objKey, jsonSchema) =>
+          val schemaToCode      = scheme.cata(schemaToTreeBuiler)
+          val (typeRegistry, _) = schemaToCode(jsonSchema)(TypeAlias(objKey)).run(Map.empty).value
+
+          val defns = typeRegistry.values.flatMap(_.toList).toList
+
+          objKey -> q"""
+             object ${Term.Name(objKey)} {
+               ..${defns}
+             }
+           """
+      }
+
 }
