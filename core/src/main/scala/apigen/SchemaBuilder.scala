@@ -13,33 +13,27 @@ import scala.meta._
 object SchemaBuilder {
 
   type TypeDefRegistry = Map[Type, NonEmptyList[Defn]]
-  type TreeBuilder     = TypeContext => State[TypeDefRegistry, Type]
-
-  sealed trait SchemaPath
-  case object Root                        extends SchemaPath
-  case class FieldPath(fieldName: String) extends SchemaPath
-  case object ArrayItem                   extends SchemaPath
+  type TreeBuilder     = NonEmptyList[SchemaPath] => State[TypeDefRegistry, Type]
 
   /**
-   * ADT to model the context used by type, this is needed for
-   * - generate type alias when type used for aliasing
-   * - generate ADT for enum, we use the name from context as ADT's name
-   * -
+   * This ADT models the path of an arbitrary object in OpenApi's schema
+   * Normally the top level path is always a NewType, that is the name of the schema
+   *
    */
-  sealed trait TypeContext
-  case class RecordField(fieldName: String)                extends TypeContext
-  case class TypeAlias(aliasName: String)                  extends TypeContext
-  case class IsNestedTypeOfAlias(closestAliasName: String) extends TypeContext
-  case class IsNestedTypeOfField(closestFieldName: String) extends TypeContext
+  sealed trait SchemaPath
+  case class NewType(typeName: String)                                extends SchemaPath
+  case class FieldPath(fieldName: String)                             extends SchemaPath
+  case object ArrayItem                                               extends SchemaPath
+  case class CoproductBranch(coproductName: String, branchId: String) extends SchemaPath
 
-  def primitiveTreeBuilder(primTpe: Type): TreeBuilder = {
-    case TypeAlias(aliasName) =>
-      val tpeName = Type.Name(aliasName)
-      addTypeDef(tpeName, q"type $tpeName = $primTpe").map(_ => primTpe)
-    case _: RecordField         => State.pure(primTpe)
-    case _: IsNestedTypeOfAlias => State.pure(primTpe)
-    case _: IsNestedTypeOfField => State.pure(primTpe)
-  }
+  def primitiveTreeBuilder(primTpe: Type): TreeBuilder =
+    path =>
+      path.last match {
+        case NewType(newTypeName) =>
+          val tpeName = Type.Name(newTypeName)
+          addTypeDef(tpeName, q"type $tpeName = $primTpe").map(_ => primTpe)
+        case _: FieldPath | ArrayItem | _: CoproductBranch => State.pure(primTpe)
+      }
 
   def addTypeDef(tpeAlias: Type, definition: Defn): State[TypeDefRegistry, Unit] =
     addTypeDefs(tpeAlias, NonEmptyList.one(definition))
@@ -97,17 +91,17 @@ object SchemaBuilder {
       case JsonSchemaF.DateF()     => primitiveTreeBuilder(t"java.time.LocalDate")
       case JsonSchemaF.DateTimeF() => primitiveTreeBuilder(t"java.time.LocalDateTime")
       case JsonSchemaF.PasswordF() => primitiveTreeBuilder(t"String")
-      case JsonSchemaF.ObjectF(properties, required) => {
-        case TypeAlias(aliasName) =>
-          val className = Type.Name(aliasName)
+      case JsonSchemaF.ObjectF(properties, required) =>
+        path =>
+          val className = Type.Name(determineTypeName(path))
           val fieldStringWithState: State[TypeDefRegistry, List[Term.Param]] =
             properties
               .traverse[State[TypeDefRegistry, *], Term.Param] {
                 case JsonSchemaF.Property(fieldName, tpeBuilder) =>
                   val isOptional = !required.contains(fieldName)
-
+                  val nextPath   = path.append(FieldPath(fieldName))
                   val innerTpeStr: State[TypeDefRegistry, Term.Param] =
-                    tpeBuilder(RecordField(fieldName)).map { tpeStr =>
+                    tpeBuilder(nextPath).map { tpeStr =>
                       val paramName = Name(fieldName)
                       if (isOptional) {
                         param"$paramName: Option[${tpeStr}]"
@@ -126,79 +120,44 @@ object SchemaBuilder {
             className
           }
 
-        case _ =>
-          throw new Exception(
-            "Object must be a type alias, or else we dont know how to name the object!"
-          )
-      }
-      case JsonSchemaF.ArrayF(tpeBuilder) => {
-        case TypeAlias(aliasName) =>
-          for {
-            tpeStr   <- tpeBuilder(IsNestedTypeOfAlias(aliasName))
-            aliasTpe = Type.Name(aliasName)
-            _        <- addTypeDef(aliasTpe, q"type $aliasTpe = List[$tpeStr]")
-          } yield {
-            aliasTpe
+      case JsonSchemaF.ArrayF(tpeBuilder) =>
+        path =>
+          path.last match {
+            case NewType(aliasName) =>
+              for {
+                tpeStr   <- tpeBuilder(path.append(ArrayItem))
+                aliasTpe = Type.Name(aliasName)
+                _        <- addTypeDef(aliasTpe, q"type $aliasTpe = List[$tpeStr]")
+              } yield {
+                aliasTpe
+              }
+            case _: FieldPath | ArrayItem | _: CoproductBranch =>
+              for {
+                tpeStr <- tpeBuilder(path.append(ArrayItem))
+              } yield {
+                Type.Apply(Type.Name("List"), tpeStr :: Nil)
+              }
           }
-        case RecordField(fieldName) =>
-          for {
-            tpeStr <- tpeBuilder(IsNestedTypeOfField(fieldName))
-          } yield {
-            Type.Apply(Type.Name("List"), tpeStr :: Nil)
-          }
-
-        case _: IsNestedTypeOfField | _: IsNestedTypeOfAlias =>
-          throw new Exception("Does not support nested array!")
-
-      }
       case JsonSchemaF.EnumF(cases) =>
-        // we can only handle string enum now, to fix it we need to fix the
-        // parser and the JsonSchema to capture all valid input
-        {
-          case TypeAlias(aliasName)                  => enumSealedTrait(Type.Name(aliasName), cases)
-          case RecordField(fieldName)                => enumSealedTrait(Type.Name(fieldName), cases)
-          case IsNestedTypeOfAlias(closestAliasName) =>
-            // this case means enum is
-            enumSealedTrait(Type.Name(s"${closestAliasName}Enum"), cases)
-          case IsNestedTypeOfField(closestFieldName) =>
-            enumSealedTrait(Type.Name(closestFieldName), cases)
-
-        }
+        path =>
+          // we can only handle string enum now, to fix it we need to fix the
+          // parser and the JsonSchema to capture all valid input
+          enumSealedTrait(Type.Name(determineTypeName(path)), cases)
 
       case JsonSchemaF.SumF(cases) =>
         /**
          * Sum type not supported now, challenges include
          * 1. cases does not
          */
-        {
-          case TypeAlias(aliasName) =>
-            val stateWithTypeRefs: State[TypeDefRegistry, List[Type]] =
-              cases.traverse[State[TypeDefRegistry, *], Type](
-                builder => builder(IsNestedTypeOfAlias(aliasName))
-              )
-            nestedEitherCoproduct(stateWithTypeRefs)
+        path =>
+          val adtName = determineTypeName(path)
+          val stateWithTypeRefs: State[TypeDefRegistry, List[Type]] =
+            cases.zipWithIndex.traverse[State[TypeDefRegistry, *], Type] {
+              case (builder, idx) =>
+                builder(path.append(CoproductBranch(adtName, idx.toString)))
+            }
+          nestedEitherCoproduct(stateWithTypeRefs)
 
-          case RecordField(fieldName) =>
-            val stateWithTypeRefs: State[TypeDefRegistry, List[Type]] =
-              cases.traverse[State[TypeDefRegistry, *], Type](
-                builder => builder(IsNestedTypeOfField(fieldName))
-              )
-            nestedEitherCoproduct(stateWithTypeRefs)
-
-          case IsNestedTypeOfField(fieldName) =>
-            val stateWithTypeRefs: State[TypeDefRegistry, List[Type]] =
-              cases.traverse[State[TypeDefRegistry, *], Type](
-                builder => builder(IsNestedTypeOfField(fieldName))
-              )
-            nestedEitherCoproduct(stateWithTypeRefs)
-
-          case IsNestedTypeOfAlias(aliasName) =>
-            val stateWithTypeRefs: State[TypeDefRegistry, List[Type]] =
-              cases.traverse[State[TypeDefRegistry, *], Type](
-                builder => builder(IsNestedTypeOfField(aliasName))
-              )
-            nestedEitherCoproduct(stateWithTypeRefs)
-        }
       case JsonSchemaF.ReferenceF(ref) =>
         _ =>
           /**
@@ -209,6 +168,50 @@ object SchemaBuilder {
             val tpeNameStr = ref.split("/").last
             Type.Name(tpeNameStr)
           }
+    }
+
+  /**
+   * This method is not comprehensive, it does not guarantee the name produced will be unique
+   * It is simply a best effort to produce a name that makes sense
+   */
+  def determineTypeName(p: NonEmptyList[SchemaPath]): String =
+    p.reverse match {
+      case NonEmptyList(NewType(typeName), _)    => typeName.capitalize
+      case NonEmptyList(FieldPath(fieldName), _) => fieldName.capitalize
+      case NonEmptyList(ArrayItem, rest) =>
+        rest
+          .collectFirst {
+            case NewType(typeName)    => s"${typeName}Item"
+            case FieldPath(fieldName) => s"${fieldName}Item"
+          }
+          .getOrElse(throw new Error("Invariant violation: Path only contains ArrayItem"))
+      case NonEmptyList(CoproductBranch(coproductName, branchId), _) =>
+        // todo: this looks horrible, can we improve it?
+        s"${coproductName}Branch${branchId}"
+
+    }
+
+  val annotateSchema: CVCoalgebra[JsonSchemaF, JsonSchemaF.Fixed] =
+    CVCoalgebra[JsonSchemaF, JsonSchemaF.Fixed] { recursiveSchema: Fix[JsonSchemaF] =>
+      recursiveSchema.unfix match {
+        case JsonSchemaF.IntegerF()                    =>
+        case JsonSchemaF.LongF()                       =>
+        case JsonSchemaF.FloatF()                      =>
+        case JsonSchemaF.DoubleF()                     =>
+        case JsonSchemaF.StringF()                     =>
+        case JsonSchemaF.ByteF()                       =>
+        case JsonSchemaF.BinaryF()                     =>
+        case JsonSchemaF.BooleanF()                    =>
+        case JsonSchemaF.DateF()                       =>
+        case JsonSchemaF.DateTimeF()                   =>
+        case JsonSchemaF.PasswordF()                   =>
+        case JsonSchemaF.ObjectF(properties, required) =>
+        case JsonSchemaF.ArrayF(values)                =>
+        case JsonSchemaF.EnumF(cases)                  =>
+        case JsonSchemaF.SumF(cases)                   =>
+        case JsonSchemaF.ReferenceF(ref)               =>
+      }
+      ???
     }
 
   def nestedEitherCoproduct(
@@ -238,8 +241,9 @@ object SchemaBuilder {
     openApiSchemas
       .map {
         case (objKey, jsonSchema) =>
-          val schemaToCode      = scheme.cata(schemaToTreeBuiler)
-          val (typeRegistry, _) = schemaToCode(jsonSchema)(TypeAlias(objKey)).run(Map.empty).value
+          val schemaToCode = scheme.cata(schemaToTreeBuiler)
+          val (typeRegistry, _) =
+            schemaToCode(jsonSchema)(NonEmptyList.one(NewType(objKey))).run(Map.empty).value
 
           val defns = typeRegistry.values.flatMap(_.toList).toList
 
