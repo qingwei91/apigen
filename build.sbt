@@ -5,7 +5,7 @@ lazy val apigen = (project in file("."))
 lazy val core = (project in file("core"))
   .settings(
     name := "apigen-core",
-    version := "0.1",
+    version := "0.1.1-SNAPSHOT",
     scalaVersion := "2.12.10",
     libraryDependencies ++= Seq(
       "org.openapitools"  % "openapi-generator"    % "4.3.0",
@@ -29,6 +29,7 @@ lazy val sbtApiGen = (project in file("sbt-apigen"))
   .enablePlugins(SbtPlugin)
   .settings(name := "sbt-apigen")
   .settings(
+    version := "0.1.1-SNAPSHOT",
     scalaVersion := "2.12.10",
     sbtPlugin := true
   )

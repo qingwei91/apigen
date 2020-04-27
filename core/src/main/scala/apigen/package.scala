@@ -24,10 +24,10 @@ package object apigen {
   def openApiToCodeFiles(inputFile: File, outputPath: Path): IO[List[Path]] =
     openApiToCodeTree(inputFile).flatMap { fileCodeMap =>
       IO {
-        Files.createDirectory(outputPath)
+        Files.createDirectories(outputPath)
         fileCodeMap.map {
           case (fileName, tree) =>
-            val filePath = Files.createFile(outputPath.relativize(Paths.get(fileName)))
+            val filePath = Files.createFile(outputPath.resolve(Paths.get(fileName)))
             Files.writeString(
               filePath,
               tree.syntax,

@@ -3,7 +3,9 @@ package apigen
 import cats.data.{ NonEmptyList, State }
 import cats.instances.list._
 import cats.syntax.all._
-import higherkindness.droste.{ Algebra, scheme }
+import higherkindness.droste._
+import higherkindness.droste.data.Fix
+import higherkindness.droste.syntax.all._
 import higherkindness.skeuomorph.openapi.JsonSchemaF
 
 import scala.meta._
@@ -12,6 +14,11 @@ object SchemaBuilder {
 
   type TypeDefRegistry = Map[Type, NonEmptyList[Defn]]
   type TreeBuilder     = TypeContext => State[TypeDefRegistry, Type]
+
+  sealed trait SchemaPath
+  case object Root                        extends SchemaPath
+  case class FieldPath(fieldName: String) extends SchemaPath
+  case object ArrayItem                   extends SchemaPath
 
   /**
    * ADT to model the context used by type, this is needed for
