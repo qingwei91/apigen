@@ -20,16 +20,6 @@ object Main {
       .parseYamlOpenApi[IO, JsonSchemaF.Fixed]
       .parse(specFile)
       .unsafeRunSync()
-
-    understand(result)
   }
-
-  def understand(apiSpec: OpenApi[JsonSchemaF.Fixed]) =
-    apiSpec.components.map { comps =>
-      SchemaBuilder.produceModelCode(comps.schemas).foreach {
-        case (str, value) => println(value.syntax)
-      }
-
-    }
 
 }

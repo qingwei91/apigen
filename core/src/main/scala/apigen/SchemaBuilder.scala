@@ -237,21 +237,28 @@ object SchemaBuilder {
 
   }
 
-  def produceModelCode(openApiSchemas: Map[String, JsonSchemaF.Fixed]): Map[String, Defn.Object] =
-    openApiSchemas
-      .map {
-        case (objKey, jsonSchema) =>
-          val schemaToCode = scheme.cata(schemaToTreeBuiler)
-          val (typeRegistry, _) =
-            schemaToCode(jsonSchema)(NonEmptyList.one(NewType(objKey))).run(Map.empty).value
+  def produceModelCode(
+    openApiSchemas: Map[String, JsonSchemaF.Fixed],
+    packageName: String,
+    moduleName: String
+  ): Source = {
+    val allDefns = openApiSchemas.flatMap {
+      case (objKey, jsonSchema) =>
+        val schemaToCode = scheme.cata(schemaToTreeBuiler)
+        val (typeRegistry, _) =
+          schemaToCode(jsonSchema)(NonEmptyList.one(NewType(objKey))).run(Map.empty).value
 
-          val defns = typeRegistry.values.flatMap(_.toList).toList
-
-          objKey -> q"""
-             object ${Term.Name(objKey)} {
-               ..${defns}
-             }
-           """
-      }
+        val defns = typeRegistry.values.flatMap(_.toList).toList
+        defns
+    }.toList
+    val packageRef = Term.Name(packageName)
+    val sourceCode = source"""
+        package $packageRef
+        object generated {
+          ..$allDefns
+        }
+       """
+    sourceCode
+  }
 
 }

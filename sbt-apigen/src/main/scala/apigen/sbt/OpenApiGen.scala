@@ -12,7 +12,10 @@ object OpenApiGen extends AutoPlugin {
     lazy val specFileInput: SettingKey[Path] = settingKey(
       "The path of directory where spec files live"
     )
-    lazy val codeOutput: SettingKey[Path] = settingKey("The path of directory to output code")
+    lazy val packageName: SettingKey[String] = settingKey("The full package name of generated code")
+    lazy val moduleName: SettingKey[String] = settingKey(
+      "The name of the module that contains generated code, it is generated as an object"
+    )
 
     lazy val apiSrcGen: TaskKey[Seq[File]] = taskKey(
       "Generate source code and return a list of generated files"
@@ -23,13 +26,15 @@ object OpenApiGen extends AutoPlugin {
 
   lazy val defaultSettings: Seq[Def.Setting[_]] = Seq(
     specFileInput := Paths.get("doc", "api"),
-    codeOutput := (sourceManaged.value / "codegen").toPath
+    packageName := "codegen",
+    moduleName := "generated"
   )
   lazy val taskSettings: Seq[Def.Setting[_]] = Seq(
     apiSrcGen := Def.task {
-      val outputDir = codeOutput.value
-      openApiToCodeFiles(specFileInput.value.toFile, outputDir)
+      val outputDir = (sourceManaged.value / packageName.value).toPath
+      openApiToCodeFiles(specFileInput.value.toFile, outputDir, packageName.value, moduleName.value)
         .unsafeRunSync()
+        .toList
         .map(_.toFile)
     }.value
   )

@@ -5,36 +5,46 @@ import java.nio.file.{ Files, Path, Paths, StandardOpenOption }
 import cats.effect.IO
 import higherkindness.skeuomorph.openapi.{ JsonSchemaF, ParseOpenApi }
 
-import scala.meta.Tree
+import scala.meta.{ Source, Tree }
 
 package object apigen {
 
-  def openApiToCodeTree(inputFile: File): IO[Map[String, Tree]] = {
+  def openApiToCodeTree(
+    inputFile: File,
+    packageName: String,
+    moduleName: String
+  ): IO[Option[Source]] = {
     val specFile = ParseOpenApi.YamlSource(inputFile)
 
     ParseOpenApi
       .parseYamlOpenApi[IO, JsonSchemaF.Fixed]
       .parse(specFile)
       .map { apiSpec =>
-        apiSpec.components.map(comps => SchemaBuilder.produceModelCode(comps.schemas))
+        apiSpec.components.map(
+          comps => SchemaBuilder.produceModelCode(comps.schemas, packageName, moduleName)
+        )
       }
-      .map(_.getOrElse(Map.empty))
   }
 
-  def openApiToCodeFiles(inputFile: File, outputPath: Path): IO[List[Path]] =
-    openApiToCodeTree(inputFile).flatMap { fileCodeMap =>
+  def openApiToCodeFiles(
+    inputFile: File,
+    outputPath: Path,
+    packagePath: String,
+    moduleName: String
+  ): IO[Option[Path]] =
+    openApiToCodeTree(inputFile, packagePath, moduleName).flatMap { maybeSource =>
       IO {
-        Files.createDirectories(outputPath)
-        fileCodeMap.map {
-          case (fileName, tree) =>
-            val filePath = Files.createFile(outputPath.resolve(Paths.get(fileName)))
-            Files.writeString(
-              filePath,
-              tree.syntax,
-              StandardCharsets.UTF_8,
-              StandardOpenOption.WRITE
-            )
-        }.toList
+        maybeSource.map { fileSource =>
+          Files.createDirectories(outputPath)
+          val filePath = outputPath.resolve(Paths.get(s"$moduleName.scala"))
+          filePath.toFile.createNewFile()
+          Files.writeString(
+            filePath,
+            fileSource.syntax,
+            StandardCharsets.UTF_8,
+            StandardOpenOption.WRITE
+          )
+        }
       }
     }
 }
