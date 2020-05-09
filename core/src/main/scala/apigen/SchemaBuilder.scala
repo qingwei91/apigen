@@ -7,13 +7,14 @@ import higherkindness.droste._
 import higherkindness.droste.data.Fix
 import higherkindness.droste.syntax.all._
 import higherkindness.skeuomorph.openapi.JsonSchemaF
+import org.http4s.HttpRoutes
 
 import scala.meta._
 
 object SchemaBuilder {
+  import Utils._
 
-  type TypeDefRegistry = Map[Type, NonEmptyList[Defn]]
-  type TreeBuilder     = NonEmptyList[SchemaPath] => State[TypeDefRegistry, Type]
+  type CodeBuilder = NonEmptyList[SchemaPath] => State[TypeDefRegistry, Type]
 
   /**
    * This ADT models the path of an arbitrary object in OpenApi's schema
@@ -26,7 +27,7 @@ object SchemaBuilder {
   case object ArrayItem                                               extends SchemaPath
   case class CoproductBranch(coproductName: String, branchId: String) extends SchemaPath
 
-  def primitiveTreeBuilder(primTpe: Type): TreeBuilder =
+  def primitiveTreeBuilder(primTpe: Type): CodeBuilder =
     path =>
       path.last match {
         case NewType(newTypeName) =>
@@ -35,19 +36,7 @@ object SchemaBuilder {
         case _: FieldPath | ArrayItem | _: CoproductBranch => State.pure(primTpe)
       }
 
-  def addTypeDef(tpeAlias: Type, definition: Defn): State[TypeDefRegistry, Unit] =
-    addTypeDefs(tpeAlias, NonEmptyList.one(definition))
-
-  def addTypeDefs(tpeAlias: Type, definitions: NonEmptyList[Defn]): State[TypeDefRegistry, Unit] =
-    State.modify[TypeDefRegistry] { registry =>
-      registry.get(tpeAlias) match {
-        case Some(value) =>
-          throw new Exception(
-            s"Unexpected state, $tpeAlias type alias has already been defined as $value"
-          )
-        case None => registry.updated(tpeAlias, definitions)
-      }
-    }
+  Type.Apply
 
   /**
    * High level use case:
@@ -78,8 +67,8 @@ object SchemaBuilder {
    * I decided not to, we can consider it if we move to Scala 3
    *
    */
-  val schemaToTreeBuiler: Algebra[JsonSchemaF, TreeBuilder] =
-    Algebra[JsonSchemaF, TreeBuilder] {
+  val schemaToTreeBuiler: Algebra[JsonSchemaF, CodeBuilder] =
+    Algebra[JsonSchemaF, CodeBuilder] {
       case JsonSchemaF.IntegerF()  => primitiveTreeBuilder(t"Int")
       case JsonSchemaF.LongF()     => primitiveTreeBuilder(t"Long")
       case JsonSchemaF.FloatF()    => primitiveTreeBuilder(t"Float")
@@ -191,29 +180,6 @@ object SchemaBuilder {
 
     }
 
-  val annotateSchema: CVCoalgebra[JsonSchemaF, JsonSchemaF.Fixed] =
-    CVCoalgebra[JsonSchemaF, JsonSchemaF.Fixed] { recursiveSchema: Fix[JsonSchemaF] =>
-      recursiveSchema.unfix match {
-        case JsonSchemaF.IntegerF()                    =>
-        case JsonSchemaF.LongF()                       =>
-        case JsonSchemaF.FloatF()                      =>
-        case JsonSchemaF.DoubleF()                     =>
-        case JsonSchemaF.StringF()                     =>
-        case JsonSchemaF.ByteF()                       =>
-        case JsonSchemaF.BinaryF()                     =>
-        case JsonSchemaF.BooleanF()                    =>
-        case JsonSchemaF.DateF()                       =>
-        case JsonSchemaF.DateTimeF()                   =>
-        case JsonSchemaF.PasswordF()                   =>
-        case JsonSchemaF.ObjectF(properties, required) =>
-        case JsonSchemaF.ArrayF(values)                =>
-        case JsonSchemaF.EnumF(cases)                  =>
-        case JsonSchemaF.SumF(cases)                   =>
-        case JsonSchemaF.ReferenceF(ref)               =>
-      }
-      ???
-    }
-
   def nestedEitherCoproduct(
     stateWithTypeRefs: State[TypeDefRegistry, List[Type]]
   ): State[TypeDefRegistry, Type] =
@@ -237,6 +203,11 @@ object SchemaBuilder {
 
   }
 
+  def modelCode(schemaName: String, schema: JsonSchemaF.Fixed): ModelCode = {
+    val schemaToCode = scheme.cata(schemaToTreeBuiler)
+    schemaToCode(schema)(NonEmptyList.one(NewType(schemaName)))
+  }
+
   def produceModelCode(
     openApiSchemas: Map[String, JsonSchemaF.Fixed],
     packageName: String,
@@ -244,13 +215,12 @@ object SchemaBuilder {
   ): Source = {
     val allDefns = openApiSchemas.flatMap {
       case (objKey, jsonSchema) =>
-        val schemaToCode = scheme.cata(schemaToTreeBuiler)
-        val (typeRegistry, _) =
-          schemaToCode(jsonSchema)(NonEmptyList.one(NewType(objKey))).run(Map.empty).value
+        val (typeRegistry, _) = modelCode(objKey, jsonSchema).run(Map.empty).value
 
         val defns = typeRegistry.values.flatMap(_.toList).toList
         defns
     }.toList
+
     val packageRef = Term.Name(packageName)
     val sourceCode = source"""
         package $packageRef

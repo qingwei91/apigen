@@ -3,11 +3,17 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.{ Files, Path, Paths, StandardOpenOption }
 
 import cats.effect.IO
+import higherkindness.skeuomorph.openapi.schema.OpenApi
 import higherkindness.skeuomorph.openapi.{ JsonSchemaF, ParseOpenApi }
 
 import scala.meta.{ Source, Tree }
 
 package object apigen {
+
+  // needed to get schema from other places
+  // not supported now
+  def extractAllSchemas(openApi: OpenApi[JsonSchemaF.Fixed]): Map[String, JsonSchemaF.Fixed] =
+    ???
 
   def openApiToCodeTree(
     inputFile: File,

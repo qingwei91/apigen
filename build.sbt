@@ -8,16 +8,17 @@ lazy val core = (project in file("core"))
     version := "0.1.1-SNAPSHOT",
     scalaVersion := "2.12.10",
     libraryDependencies ++= Seq(
-      "org.openapitools"  % "openapi-generator"    % "4.3.0",
-      "org.http4s"        %% "http4s-core"         % "0.21.2",
-      "org.spartanz"      %% "schemaz-core"        % "0.1.0",
-      "org.spartanz"      %% "schemaz-generic"     % "0.1.0",
-      "io.higherkindness" %% "skeuomorph"          % "0.0.22",
-      "io.circe"          %% "circe-core"          % "0.12.3",
-      "io.circe"          %% "circe-generic"       % "0.12.3",
-      "org.http4s"        %% "http4s-blaze-client" % "0.20.16",
-      "org.http4s"        %% "http4s-circe"        % "0.20.16",
-      "org.scalameta"     %% "scalameta"           % "4.3.8"
+      "org.openapitools"           % "openapi-generator"    % "4.3.0",
+      "com.softwaremill.quicklens" %% "quicklens"           % "1.5.0",
+      "org.http4s"                 %% "http4s-core"         % "0.21.2",
+      "org.spartanz"               %% "schemaz-core"        % "0.1.0",
+      "org.spartanz"               %% "schemaz-generic"     % "0.1.0",
+      "io.higherkindness"          %% "skeuomorph"          % "0.0.22",
+      "io.circe"                   %% "circe-core"          % "0.12.3",
+      "io.circe"                   %% "circe-generic"       % "0.12.3",
+      "org.http4s"                 %% "http4s-blaze-client" % "0.20.16",
+      "org.http4s"                 %% "http4s-circe"        % "0.20.16",
+      "org.scalameta"              %% "scalameta"           % "4.3.8"
     ),
     addCompilerPlugin(
       ("org.typelevel" %% "kind-projector" % "0.11.0").cross(CrossVersion.full)
