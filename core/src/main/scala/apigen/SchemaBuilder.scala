@@ -14,6 +14,16 @@ import scala.meta._
 object SchemaBuilder {
   import Utils._
 
+  /**
+   * This type represent a function that converts Path into a Type, while producing a Type Definition Registry
+   * It takes in Path as input, because we want to build Path when traverse the tree from top to bottom,
+   * but we only want to collapse from bottom to top, making it a function allow us to attach information
+   * from top to bottom.
+   * The intuition is that by making it a function, the caller will provide the path, and the caller is actually
+   * the layer above, which knows more about the path, and recursively this will reach root, which knows how things start
+   *
+   * It returns a State monad because we want to capture both state and a return Type
+   */
   type CodeBuilder = NonEmptyList[SchemaPath] => State[TypeDefRegistry, Type]
 
   /**
@@ -35,8 +45,6 @@ object SchemaBuilder {
           addTypeDef(tpeName, q"type $tpeName = $primTpe").map(_ => primTpe)
         case _: FieldPath | ArrayItem | _: CoproductBranch => State.pure(primTpe)
       }
-
-  Type.Apply
 
   /**
    * High level use case:
@@ -221,14 +229,14 @@ object SchemaBuilder {
         defns
     }.toList
 
-    val packageRef = Term.Name(packageName)
-    val sourceCode = source"""
+    val packageRef    = Term.Name(packageName)
+    val moduleNameRef = Term.Name(moduleName)
+    val sourceCode    = source"""
         package $packageRef
-        object generated {
+        object $moduleNameRef {
           ..$allDefns
         }
        """
     sourceCode
   }
-
 }

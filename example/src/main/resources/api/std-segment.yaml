@@ -1,0 +1,84 @@
+openapi: "3.0.0"
+info:
+  version: 1.0.0
+  title: Std Segments
+  license:
+    name: MIT
+servers:
+  - url: http://petstore.swagger.io/v1
+paths:
+  /std-segments:
+    get:
+      summary: Get all std segments
+      operationId: getAllStdSegments
+      responses:
+        '200':
+          description: A list of std segments
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StdSegments"
+        default:
+          description: unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MyError"
+  /projects/{projectId}/std_segments:
+    post:
+      summary: Add Std Segments to project
+      operationId: addStdSegments
+      parameters:
+        - in: path
+          name: projectId
+          schema:
+            type: string
+          required: true
+          description: Project ID should be UUID
+      responses:
+        '204':
+          description: Done
+        default:
+          description: unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MyError"
+
+components:
+  schemas:
+    StdSegments:
+      type: array
+      items:
+        $ref: "#/components/schemas/StdSegment"
+
+    StdSegment:
+      type: object
+      required:
+        - id
+        - public_id
+        - name
+        - query
+      properties:
+        id:
+          type: integer
+        public_id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        query:
+          type: string
+
+    MyError:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: integer
+          format: int32
+        message:
+          type: string
